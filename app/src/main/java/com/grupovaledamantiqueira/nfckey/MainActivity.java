@@ -57,7 +57,61 @@ public class MainActivity extends Activity {
         loadDoorOptions();
         setContentView(buildUi());
         restoreSelectedDoor();
+        applyLabIntent(getIntent());
         refreshUi();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        applyLabIntent(intent);
+        refreshUi();
+    }
+
+    private void applyLabIntent(Intent intent) {
+        if (intent == null || (!intent.hasExtra("room") && !intent.hasExtra("door_id") && !intent.hasExtra("arm"))) {
+            return;
+        }
+
+        String room = intent.getStringExtra("room");
+        String doorId = intent.getStringExtra("door_id");
+        if (room != null || doorId != null) {
+            if (room == null || !room.matches("[0-9]{3,4}")) {
+                NfcKeyStore.recordEvent(this, "Intent LAB rejeitado: room invalido");
+                return;
+            }
+            if (doorId == null || !doorId.matches("[0-9]{6}")) {
+                NfcKeyStore.recordEvent(this, "Intent LAB rejeitado: door_id invalido");
+                return;
+            }
+            DoorOption matching = null;
+            for (DoorOption option : doorOptions) {
+                if (room.equals(option.room) && doorId.equals(option.doorId)) {
+                    matching = option;
+                    break;
+                }
+            }
+            if (matching == null) {
+                NfcKeyStore.recordEvent(this, "Intent LAB rejeitado: quarto ausente em doors.json");
+                return;
+            }
+            NfcKeyStore.setSelectedDoor(this, room, doorId);
+            if (roomSpinner != null) {
+                for (int i = 0; i < doorOptions.size(); i++) {
+                    if (doorOptions.get(i).doorId.equals(doorId)) {
+                        roomSpinner.setSelection(i + 1, false);
+                        break;
+                    }
+                }
+            }
+        }
+        if (intent.hasExtra("arm")) {
+            NfcKeyStore.setArmed(this, intent.getBooleanExtra("arm", false));
+        }
+        NfcKeyStore.recordEvent(this, "LAB estado: ARMED=" + NfcKeyStore.isArmed(this)
+                + " ROOM=" + NfcKeyStore.selectedRoom(this)
+                + " DOOR=" + NfcKeyStore.selectedDoorId(this));
     }
 
     @Override

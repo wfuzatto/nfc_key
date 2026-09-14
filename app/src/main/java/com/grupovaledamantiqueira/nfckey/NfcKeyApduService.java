@@ -2,11 +2,13 @@ package com.grupovaledamantiqueira.nfckey;
 
 import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
+import android.util.Log;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 public class NfcKeyApduService extends HostApduService {
+    private static final String TAG = "NFC_KEY_HCE";
     private static final byte[] LAB_AID = hex("F04E46434B455931");
     private static final byte[] SW_OK = hex("9000");
     private static final byte[] SW_CONDITIONS_NOT_SATISFIED = hex("6985");
@@ -14,21 +16,32 @@ public class NfcKeyApduService extends HostApduService {
     private static final byte[] SW_WRONG_DATA = hex("6A80");
 
     @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.i(TAG, "SERVICE created");
+    }
+
+    @Override
     public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {
+        Log.i(TAG, "SERVICE processCommandApdu");
+        Log.i(TAG, "RX " + NfcKeyStore.toHex(commandApdu));
         NfcKeyStore.recordApdu(this, commandApdu);
 
         if (!NfcKeyStore.isArmed(this) || !NfcKeyStore.hasSelectedDoor(this)) {
-            return SW_CONDITIONS_NOT_SATISFIED;
+            return send(SW_CONDITIONS_NOT_SATISFIED);
         }
 
         String room = NfcKeyStore.selectedRoom(this);
         String doorId = NfcKeyStore.selectedDoorId(this);
 
         if (isSelectOurAid(commandApdu)) {
+            Log.i(TAG, "SELECT AID OK");
+            Log.i(TAG, "ROOM=" + room + " DOOR=" + doorId);
             NfcKeyStore.recordEvent(this,
                     "SELECT AID recebido; quarto " + room + " / door_id " + doorId);
-            return SW_OK;
+            return send(SW_OK);
         }
+        Log.i(TAG, "SELECT AID rejected or command not supported");
 
         // Comando proprietário apenas para teste com outro leitor/app de laboratório.
         // 80 CA 00 00 00 -> retorna versão, quarto e door_id selecionados + 90 00.
@@ -39,20 +52,26 @@ public class NfcKeyApduService extends HostApduService {
                 && commandApdu[3] == 0x00) {
             String state = "NFC_KEY_LAB/0.2;ROOM=" + room + ";DOOR=" + doorId + ";ARMED=1";
             byte[] payload = state.getBytes(StandardCharsets.UTF_8);
-            return concat(payload, SW_OK);
+            return send(concat(payload, SW_OK));
         }
 
         if (commandApdu == null || commandApdu.length < 4) {
-            return SW_WRONG_DATA;
+            return send(SW_WRONG_DATA);
         }
 
-        return SW_INS_NOT_SUPPORTED;
+        return send(SW_INS_NOT_SUPPORTED);
     }
 
     @Override
     public void onDeactivated(int reason) {
+        Log.i(TAG, "onDeactivated reason=" + reason);
         String why = reason == DEACTIVATION_LINK_LOSS ? "link NFC perdido" : "AID desselecionado";
         NfcKeyStore.recordEvent(this, "Sessão HCE encerrada: " + why);
+    }
+
+    private static byte[] send(byte[] response) {
+        Log.i(TAG, "TX " + NfcKeyStore.toHex(response));
+        return response;
     }
 
     private static boolean isSelectOurAid(byte[] apdu) {
