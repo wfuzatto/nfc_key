@@ -17,23 +17,28 @@ public class NfcKeyApduService extends HostApduService {
     public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {
         NfcKeyStore.recordApdu(this, commandApdu);
 
-        if (!NfcKeyStore.isArmed(this)) {
+        if (!NfcKeyStore.isArmed(this) || !NfcKeyStore.hasSelectedDoor(this)) {
             return SW_CONDITIONS_NOT_SATISFIED;
         }
 
+        String room = NfcKeyStore.selectedRoom(this);
+        String doorId = NfcKeyStore.selectedDoorId(this);
+
         if (isSelectOurAid(commandApdu)) {
-            NfcKeyStore.recordEvent(this, "SELECT AID recebido; sessão HCE ativa");
+            NfcKeyStore.recordEvent(this,
+                    "SELECT AID recebido; quarto " + room + " / door_id " + doorId);
             return SW_OK;
         }
 
         // Comando proprietário apenas para teste com outro leitor/app de laboratório.
-        // 80 CA 00 00 00 -> retorna versão/estado e 90 00.
+        // 80 CA 00 00 00 -> retorna versão, quarto e door_id selecionados + 90 00.
         if (commandApdu != null && commandApdu.length >= 5
                 && (commandApdu[0] & 0xFF) == 0x80
                 && (commandApdu[1] & 0xFF) == 0xCA
                 && commandApdu[2] == 0x00
                 && commandApdu[3] == 0x00) {
-            byte[] payload = "NFC_KEY_LAB/0.1;ARMED=1".getBytes(StandardCharsets.UTF_8);
+            String state = "NFC_KEY_LAB/0.2;ROOM=" + room + ";DOOR=" + doorId + ";ARMED=1";
+            byte[] payload = state.getBytes(StandardCharsets.UTF_8);
             return concat(payload, SW_OK);
         }
 
