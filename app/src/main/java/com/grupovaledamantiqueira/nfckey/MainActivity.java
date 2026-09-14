@@ -11,12 +11,22 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -25,9 +35,12 @@ public class MainActivity extends Activity {
     private TextView statusView;
     private TextView hceLogView;
     private TextView cardView;
+    private TextView selectedDoorView;
     private Button armButton;
     private Button readCardButton;
+    private Spinner roomSpinner;
     private boolean readerModeActive;
+    private final List<DoorOption> doorOptions = new ArrayList<>();
 
     private final Runnable refreshRunnable = new Runnable() {
         @Override
@@ -41,7 +54,9 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         nfcAdapter = NfcAdapter.getDefaultAdapter(this);
+        loadDoorOptions();
         setContentView(buildUi());
+        restoreSelectedDoor();
         refreshUi();
     }
 
@@ -85,11 +100,55 @@ public class MainActivity extends Activity {
         statusView = text("", 15, false, Color.rgb(31, 41, 55));
         root.addView(card(statusView));
 
-        root.addView(sectionTitle("2. Teste na fechadura"));
+        root.addView(sectionTitle("2. Selecionar quarto do BIS"));
+        TextView roomHelp = text(
+                "A lista abaixo foi extraída do btlock57.mdb. O texto mostra o número do quarto e o valor interno salvo é o door_id de 6 dígitos usado pelo BIS.",
+                15, false, Color.rgb(55, 65, 81));
+        root.addView(card(roomHelp));
+
+        roomSpinner = new Spinner(this);
+        List<String> labels = new ArrayList<>();
+        labels.add("Selecione o quarto...");
+        for (DoorOption option : doorOptions) {
+            labels.add("Quarto " + option.room);
+        }
+        ArrayAdapter<String> roomAdapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_spinner_item,
+                labels);
+        roomAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        roomSpinner.setAdapter(roomAdapter);
+        roomSpinner.setPadding(dp(8), dp(4), dp(8), dp(4));
+        root.addView(roomSpinner, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)));
+
+        selectedDoorView = text("Nenhum quarto selecionado.", 14, false, Color.rgb(31, 41, 55));
+        selectedDoorView.setTextIsSelectable(true);
+        root.addView(card(selectedDoorView));
+
+        roomSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position <= 0) return;
+                DoorOption option = doorOptions.get(position - 1);
+                String currentDoor = NfcKeyStore.selectedDoorId(MainActivity.this);
+                if (!option.doorId.equals(currentDoor)) {
+                    NfcKeyStore.setSelectedDoor(MainActivity.this, option.room, option.doorId);
+                }
+                refreshUi();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+
+        root.addView(sectionTitle("3. Teste na fechadura"));
         TextView instructions = text(
-                "Arme o HCE, mantenha a tela desbloqueada e aproxime o telefone da fechadura. " +
+                "Selecione o quarto, arme o HCE, mantenha a tela desbloqueada e aproxime o telefone da fechadura. " +
                         "Se a fechadura conversar por ISO-DEP/APDU e selecionar o AID do laboratório, o contador abaixo aumenta. " +
-                        "Se continuar em zero, isso é evidência de que o leitor não está chegando ao HCE do Android.",
+                        "O door_id selecionado fica associado à sessão de teste.",
                 15, false, Color.rgb(55, 65, 81));
         root.addView(card(instructions));
 
@@ -111,7 +170,7 @@ public class MainActivity extends Activity {
         });
         root.addView(clearButton);
 
-        root.addView(sectionTitle("3. Conferir cartão físico"));
+        root.addView(sectionTitle("4. Conferir cartão físico"));
         TextView cardHelp = text(
                 "Este teste NÃO lê HPASS nem tenta copiar setores. Ele apenas mostra UID e tecnologias NFC anunciadas pelo cartão, " +
                         "para confirmarmos se o cartão real é MIFARE Classic.",
@@ -145,21 +204,62 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
+    private void loadDoorOptions() {
+        doorOptions.clear();
+        try (InputStream input = getAssets().open("doors.json")) {
+            byte[] bytes = new byte[input.available()];
+            int read = input.read(bytes);
+            if (read <= 0) return;
+            JSONArray array = new JSONArray(new String(bytes, 0, read, StandardCharsets.UTF_8));
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject obj = array.getJSONObject(i);
+                doorOptions.add(new DoorOption(
+                        obj.getString("room"),
+                        obj.getString("doorId"),
+                        obj.optString("rawDoorName", "")));
+            }
+        } catch (Exception ex) {
+            NfcKeyStore.recordEvent(this, "Falha ao carregar doors.json: " + ex.getClass().getSimpleName());
+        }
+    }
+
+    private void restoreSelectedDoor() {
+        if (roomSpinner == null) return;
+        String selected = NfcKeyStore.selectedDoorId(this);
+        if (selected.isEmpty()) return;
+        for (int i = 0; i < doorOptions.size(); i++) {
+            if (selected.equals(doorOptions.get(i).doorId)) {
+                roomSpinner.setSelection(i + 1, false);
+                return;
+            }
+        }
+    }
+
     private void refreshUi() {
         boolean hasNfc = nfcAdapter != null;
         boolean nfcEnabled = hasNfc && nfcAdapter.isEnabled();
         boolean hasHce = getPackageManager().hasSystemFeature(PackageManager.FEATURE_NFC_HOST_CARD_EMULATION);
         boolean armed = NfcKeyStore.isArmed(this);
+        boolean hasDoor = NfcKeyStore.hasSelectedDoor(this);
 
         String status = "NFC no aparelho: " + yesNo(hasNfc) +
                 "\nNFC ligado: " + yesNo(nfcEnabled) +
                 "\nHCE (Host Card Emulation): " + yesNo(hasHce) +
                 "\nAID de laboratório: F04E46434B455931" +
+                "\nQuartos/portas carregados: " + doorOptions.size() +
                 "\nEstado do teste: " + (armed ? "ARMADO" : "desarmado");
         statusView.setText(status);
 
+        if (hasDoor) {
+            selectedDoorView.setText(
+                    "Quarto selecionado: " + NfcKeyStore.selectedRoom(this) +
+                            "\nBIS door_id (value): " + NfcKeyStore.selectedDoorId(this));
+        } else {
+            selectedDoorView.setText("Nenhum quarto selecionado.");
+        }
+
         armButton.setText(armed ? "Desarmar teste HCE" : "Armar teste HCE");
-        armButton.setEnabled(hasHce && nfcEnabled);
+        armButton.setEnabled((armed || hasDoor) && hasHce && nfcEnabled);
 
         hceLogView.setText(String.format(Locale.US,
                 "APDUs recebidas: %d\nÚltima APDU: %s\nÚltimo evento: %s",
@@ -278,5 +378,17 @@ public class MainActivity extends Activity {
 
     private static String yesNo(boolean value) {
         return value ? "SIM" : "NÃO";
+    }
+
+    private static final class DoorOption {
+        final String room;
+        final String doorId;
+        final String rawDoorName;
+
+        DoorOption(String room, String doorId, String rawDoorName) {
+            this.room = room;
+            this.doorId = doorId;
+            this.rawDoorName = rawDoorName;
+        }
     }
 }
