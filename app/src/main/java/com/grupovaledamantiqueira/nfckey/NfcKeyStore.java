@@ -12,6 +12,8 @@ final class NfcKeyStore {
     static final String KEY_APDU_COUNT = "apdu_count";
     static final String KEY_LAST_APDU = "last_apdu";
     static final String KEY_LAST_EVENT = "last_event";
+    static final String KEY_ROOM = "selected_room";
+    static final String KEY_DOOR_ID = "selected_door_id";
 
     private NfcKeyStore() {
     }
@@ -29,6 +31,26 @@ final class NfcKeyStore {
                 .putBoolean(KEY_ARMED, armed)
                 .putString(KEY_LAST_EVENT, timestamp() + " | " + (armed ? "Teste HCE armado" : "Teste HCE desarmado"))
                 .apply();
+    }
+
+    static void setSelectedDoor(Context context, String room, String doorId) {
+        prefs(context).edit()
+                .putString(KEY_ROOM, room == null ? "" : room)
+                .putString(KEY_DOOR_ID, doorId == null ? "" : doorId)
+                .putString(KEY_LAST_EVENT, timestamp() + " | Porta selecionada: quarto " + room + " / " + doorId)
+                .apply();
+    }
+
+    static String selectedRoom(Context context) {
+        return prefs(context).getString(KEY_ROOM, "");
+    }
+
+    static String selectedDoorId(Context context) {
+        return prefs(context).getString(KEY_DOOR_ID, "");
+    }
+
+    static boolean hasSelectedDoor(Context context) {
+        return !selectedRoom(context).isEmpty() && !selectedDoorId(context).isEmpty();
     }
 
     static void recordApdu(Context context, byte[] apdu) {
