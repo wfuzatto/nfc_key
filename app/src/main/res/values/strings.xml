@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NFC Key Lab</string>
+    <string name="hce_service_description">NFC Key Lab - chave móvel de teste</string>
+    <string name="hce_aid_group">NFC Key Lab</string>
+</resources>
